@@ -9,6 +9,7 @@ const STORAGE_KEYS = {
   OAUTH_STATE: 'qs_oauth_state',
   PENDING_QUERY: 'qs_pending_query',
   SAVED_COMBOS: 'qs_saved_combos',
+  PINNED_COMBOS: 'qs_pinned_combos',
   ARTIST_OVERRIDES: 'qs_artist_overrides',
   REUSABLE_PLAYLIST_ID: 'qs_reusable_playlist_id',
 };
@@ -22,6 +23,7 @@ const SCOPES = [
   'playlist-modify-private',
   'playlist-modify-public',
   'playlist-read-private',
+  'ugc-image-upload',
 ].join(' ');
 
 // App State
@@ -39,10 +41,13 @@ const state = {
   discographyCache: new Map(), // `${artistId}:${depth}` -> track[]
   currentTracksPool: new Map(), // artistId -> track[]
   shuffledQueue: [],
+  totalCatalogCount: 0,
   activeTrackIndex: -1,
+  activeSyncedPlaylistId: null,
   isBusy: false,
   artistOverrides: loadJson(STORAGE_KEYS.ARTIST_OVERRIDES, {}),
   savedCombos: loadJson(STORAGE_KEYS.SAVED_COMBOS, DEFAULT_COMBOS),
+  pinnedCombos: loadJson(STORAGE_KEYS.PINNED_COMBOS, []),
 };
 
 // DOM Elements
@@ -1074,25 +1079,91 @@ async function executeShuffleAndPlay(autoPlay = true) {
   }
 }
 
-function renderResultsSection(artists, totalCatalogCount) {
-  els.resultsSection.classList.remove('hidden');
-  els.resultsTitle.textContent = artists.map((a) => a.name).join(' + ');
+function formatTotalDuration(totalMs) {
+  if (!totalMs || totalMs <= 0) return '';
+  const totalMinutes = Math.round(totalMs / 60000);
+  if (totalMinutes < 60) {
+    return `${Math.max(1, totalMinutes)} min`;
+  }
+  const hours = Math.floor(totalMinutes / 60);
+  const mins = totalMinutes % 60;
+  return mins > 0 ? `${hours} hr ${mins} min` : `${hours} hr`;
+}
 
+function updateResultsSubtitle() {
   const balanceLabel =
     els.balanceSelect.value === 'balanced' ? 'Balanced mix' : 'Pure random';
-  els.resultsSubtitle.textContent = `${state.shuffledQueue.length} songs queued from ${totalCatalogCount} catalog tracks · ${balanceLabel}`;
+  const totalMs = state.shuffledQueue.reduce(
+    (sum, t) => sum + (Number(t.duration_ms) || 0),
+    0
+  );
+  const durationLabel = formatTotalDuration(totalMs);
+  const parts = [
+    `${state.shuffledQueue.length} songs`,
+    durationLabel,
+    balanceLabel,
+    `${state.totalCatalogCount} in catalog`,
+  ].filter(Boolean);
+  els.resultsSubtitle.textContent = parts.join(' · ');
+}
 
+function renderResultsSection(artists, totalCatalogCount) {
+  state.totalCatalogCount = totalCatalogCount;
+  els.resultsSection.classList.remove('hidden');
+  els.resultsTitle.textContent = artists.map((a) => a.name).join(' + ');
+  updateResultsSubtitle();
   renderTracklist();
 }
 
+async function removeTrackFromLiveSpotifyPlaylist(trackUri, wasCurrentlyPlaying) {
+  const playlistId =
+    state.activeSyncedPlaylistId ||
+    localStorage.getItem(STORAGE_KEYS.REUSABLE_PLAYLIST_ID);
+  if (!playlistId || !trackUri || !isAuthenticated()) return;
+
+  try {
+    try {
+      await spotifyFetch(`/playlists/${playlistId}/items`, {
+        method: 'DELETE',
+        body: JSON.stringify({
+          items: [{ uri: trackUri }],
+          tracks: [{ uri: trackUri }],
+        }),
+      });
+    } catch {
+      await spotifyFetch(`/playlists/${playlistId}/tracks`, {
+        method: 'DELETE',
+        body: JSON.stringify({
+          tracks: [{ uri: trackUri }],
+        }),
+      });
+    }
+
+    if (wasCurrentlyPlaying) {
+      await spotifyFetch('/me/player/next', { method: 'POST' }).catch(() => {});
+    }
+  } catch {
+    // Non-fatal background sync
+  }
+}
+
 function removeTrackAt(idx) {
+  const removed = state.shuffledQueue[idx];
+  if (!removed) return;
+
+  const wasPlaying = state.activeTrackIndex === idx;
   state.shuffledQueue.splice(idx, 1);
-  if (state.activeTrackIndex === idx) {
-    state.activeTrackIndex = -1;
+
+  if (wasPlaying) {
+    state.activeTrackIndex =
+      idx < state.shuffledQueue.length ? idx : -1;
   } else if (state.activeTrackIndex > idx) {
     state.activeTrackIndex--;
   }
+
+  updateResultsSubtitle();
   renderTracklist();
+  removeTrackFromLiveSpotifyPlaylist(removed.uri, wasPlaying);
 }
 
 function renderTracklist() {
@@ -1265,7 +1336,84 @@ async function replacePlaylistItems(playlistId, uris) {
   }
 }
 
-// Helper to get or create & populate the single reusable "Selective Shuffle ⚡" playlist
+// Convert ./icon.png into a base64-encoded JPEG (<= 256 KB) for Spotify playlist cover API
+let cachedPlaylistCoverBase64 = null;
+let hasShownCoverScopeHint = false;
+
+async function getPlaylistCoverBase64() {
+  if (cachedPlaylistCoverBase64) return cachedPlaylistCoverBase64;
+
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.onload = () => {
+      try {
+        const size = 512;
+        const canvas = document.createElement('canvas');
+        canvas.width = size;
+        canvas.height = size;
+        const ctx = canvas.getContext('2d');
+        ctx.fillStyle = '#121212';
+        ctx.fillRect(0, 0, size, size);
+        ctx.drawImage(img, 0, 0, size, size);
+
+        let quality = 0.88;
+        let dataUrl = canvas.toDataURL('image/jpeg', quality);
+        let base64 = dataUrl.split(',')[1] || '';
+
+        while (base64.length > 240000 && quality > 0.4) {
+          quality -= 0.12;
+          dataUrl = canvas.toDataURL('image/jpeg', quality);
+          base64 = dataUrl.split(',')[1] || '';
+        }
+
+        cachedPlaylistCoverBase64 = base64;
+        resolve(base64);
+      } catch (err) {
+        reject(err);
+      }
+    };
+    img.onerror = () =>
+      reject(new Error('Failed to load icon.png for playlist cover'));
+    img.src = './icon.png';
+  });
+}
+
+async function uploadPlaylistCoverImage(playlistId) {
+  if (!playlistId || !isAuthenticated()) return false;
+  const coverKey = `qs_cover_v1_${playlistId}`;
+  if (localStorage.getItem(coverKey) === '1') return true;
+
+  try {
+    const base64Jpeg = await getPlaylistCoverBase64();
+    if (!base64Jpeg) return false;
+
+    await spotifyFetch(`/playlists/${playlistId}/images`, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'image/jpeg',
+      },
+      body: base64Jpeg,
+    });
+
+    localStorage.setItem(coverKey, '1');
+    return true;
+  } catch (err) {
+    if (
+      (err.status === 401 || err.status === 403) &&
+      !hasShownCoverScopeHint
+    ) {
+      hasShownCoverScopeHint = true;
+      showToast(
+        'Tip: Reconnect Spotify in Settings once to grant playlist cover image permission',
+        4500
+      );
+    }
+    return false;
+  }
+}
+
+// Helper to get or create & populate the single reusable "Selective Shuffle" playlist
 async function syncReusablePlaylist(uris) {
   if (!state.userProfile) {
     state.userProfile = await spotifyFetch('/me');
@@ -1273,10 +1421,14 @@ async function syncReusablePlaylist(uris) {
 
   const artistNames = els.resultsTitle.textContent || 'Selective Shuffle';
   let playlistId = localStorage.getItem(STORAGE_KEYS.REUSABLE_PLAYLIST_ID);
+  let existingName = '';
 
   if (playlistId) {
     try {
-      await spotifyFetch(`/playlists/${playlistId}?fields=id`);
+      const existing = await spotifyFetch(
+        `/playlists/${playlistId}?fields=id,name`
+      );
+      existingName = existing?.name || '';
     } catch {
       playlistId = null;
     }
@@ -1286,10 +1438,14 @@ async function syncReusablePlaylist(uris) {
     try {
       const myPlaylists = await spotifyFetch('/me/playlists?limit=10');
       const found = (myPlaylists?.items || []).find(
-        (p) => p.name === 'Selective Shuffle ⚡' || p.name === 'Quick Shuffle ⚡'
+        (p) =>
+          p.name === 'Selective Shuffle' ||
+          p.name === 'Selective Shuffle ⚡' ||
+          p.name === 'Quick Shuffle ⚡'
       );
       if (found) {
         playlistId = found.id;
+        existingName = found.name || '';
         localStorage.setItem(STORAGE_KEYS.REUSABLE_PLAYLIST_ID, playlistId);
       }
     } catch {
@@ -1301,16 +1457,26 @@ async function syncReusablePlaylist(uris) {
     const created = await spotifyFetch('/me/playlists', {
       method: 'POST',
       body: JSON.stringify({
-        name: 'Selective Shuffle ⚡',
+        name: 'Selective Shuffle',
         description: `Shuffled mix of ${artistNames} (generated by Selective Shuffle)`,
         public: false,
       }),
     });
     playlistId = created.id;
     localStorage.setItem(STORAGE_KEYS.REUSABLE_PLAYLIST_ID, playlistId);
+  } else {
+    await spotifyFetch(`/playlists/${playlistId}`, {
+      method: 'PUT',
+      body: JSON.stringify({
+        name: 'Selective Shuffle',
+        description: `Shuffled mix of ${artistNames} (generated by Selective Shuffle)`,
+      }),
+    }).catch(() => {});
   }
 
   await replacePlaylistItems(playlistId, uris);
+  await uploadPlaylistCoverImage(playlistId);
+  state.activeSyncedPlaylistId = playlistId;
   return playlistId;
 }
 
@@ -1461,6 +1627,8 @@ async function saveOrUpdatePlaylist(reusable = true) {
       });
       playlistId = created.id;
       await replacePlaylistItems(playlistId, uris);
+      await uploadPlaylistCoverImage(playlistId);
+      state.activeSyncedPlaylistId = playlistId;
     }
 
     setStatus('');
@@ -1469,7 +1637,7 @@ async function saveOrUpdatePlaylist(reusable = true) {
     const webUrl = `https://open.spotify.com/playlist/${playlistId}`;
 
     els.playlistSavedText.textContent = reusable
-      ? `"Selective Shuffle ⚡" updated (${uris.length} songs)`
+      ? `"Selective Shuffle" updated (${uris.length} songs)`
       : `Saved "${artistNames}" playlist`;
     els.openSpotifyAppLink.href = appUri;
     els.openSpotifyWebLink.href = webUrl;
@@ -1483,8 +1651,61 @@ async function saveOrUpdatePlaylist(reusable = true) {
   }
 }
 
-// Saved / Recent Combos (Preview capped at 10 + Full History Bottom Sheet)
+// Saved / Recent Combos (Preview capped at 10 + Pin Favorites + Full History Bottom Sheet)
 const HISTORY_PREVIEW_LIMIT = 10;
+
+function isComboPinned(combo) {
+  const norm = String(combo || '').trim().toLowerCase();
+  return state.pinnedCombos.some((c) => c.toLowerCase() === norm);
+}
+
+function getOrderedCombos() {
+  const pinnedSet = new Set(state.pinnedCombos.map((c) => c.toLowerCase()));
+  const pinnedList = [];
+  const unpinnedList = [];
+
+  for (const p of state.pinnedCombos) {
+    const lower = p.toLowerCase();
+    if (!pinnedList.includes(lower)) {
+      pinnedList.push(lower);
+    }
+  }
+
+  for (const c of state.savedCombos) {
+    const lower = c.toLowerCase();
+    if (!pinnedSet.has(lower) && !unpinnedList.includes(lower)) {
+      unpinnedList.push(lower);
+    }
+  }
+
+  return [...pinnedList, ...unpinnedList];
+}
+
+function togglePinCombo(combo) {
+  const norm = combo.trim().toLowerCase();
+  if (!norm) return;
+
+  if (isComboPinned(norm)) {
+    state.pinnedCombos = state.pinnedCombos.filter(
+      (c) => c.toLowerCase() !== norm
+    );
+  } else {
+    state.pinnedCombos = [
+      norm,
+      ...state.pinnedCombos.filter((c) => c.toLowerCase() !== norm),
+    ];
+    if (!state.savedCombos.some((c) => c.toLowerCase() === norm)) {
+      state.savedCombos.unshift(norm);
+      saveJson(STORAGE_KEYS.SAVED_COMBOS, state.savedCombos);
+    }
+  }
+
+  saveJson(STORAGE_KEYS.PINNED_COMBOS, state.pinnedCombos);
+  renderSavedCombos();
+  if (!els.historyModal.classList.contains('hidden')) {
+    renderFullHistoryList();
+  }
+}
 
 function saveRecentCombo(comboStr) {
   const norm = comboStr.trim().toLowerCase();
@@ -1498,12 +1719,15 @@ function saveRecentCombo(comboStr) {
 }
 
 function removeSavedCombo(combo) {
-  state.savedCombos = state.savedCombos.filter((c) => c !== combo);
+  const norm = combo.trim().toLowerCase();
+  state.savedCombos = state.savedCombos.filter((c) => c.toLowerCase() !== norm);
+  state.pinnedCombos = state.pinnedCombos.filter((c) => c.toLowerCase() !== norm);
   saveJson(STORAGE_KEYS.SAVED_COMBOS, state.savedCombos);
+  saveJson(STORAGE_KEYS.PINNED_COMBOS, state.pinnedCombos);
   renderSavedCombos();
   if (!els.historyModal.classList.contains('hidden')) {
     renderFullHistoryList();
-    if (state.savedCombos.length === 0) {
+    if (getOrderedCombos().length === 0) {
       closeHistoryModal();
     }
   }
@@ -1511,7 +1735,8 @@ function removeSavedCombo(combo) {
 
 function renderSavedCombos() {
   els.savedCombosList.innerHTML = '';
-  const total = state.savedCombos.length;
+  const ordered = getOrderedCombos();
+  const total = ordered.length;
 
   if (total === 0) {
     els.savedCombosSection.classList.add('hidden');
@@ -1521,17 +1746,26 @@ function renderSavedCombos() {
 
   els.savedCombosSection.classList.remove('hidden');
 
-  const previewItems = state.savedCombos.slice(0, HISTORY_PREVIEW_LIMIT);
+  const previewItems = ordered.slice(0, HISTORY_PREVIEW_LIMIT);
 
   for (const combo of previewItems) {
+    const pinned = isComboPinned(combo);
     const pill = document.createElement('div');
-    pill.className = 'combo-pill';
+    pill.className = `combo-pill ${pinned ? 'pinned' : ''}`;
     pill.innerHTML = `
+      <button type="button" class="combo-pill-pin" title="${
+        pinned ? 'Unpin combo' : 'Pin combo to top'
+      }" aria-label="${pinned ? 'Unpin' : 'Pin'}">${pinned ? '★' : '☆'}</button>
       <span class="combo-pill-text">${escapeHtml(combo)}</span>
       <span class="combo-pill-remove" title="Remove from history" role="button" aria-label="Remove">×</span>
     `;
 
     pill.addEventListener('click', (e) => {
+      if (e.target.closest('.combo-pill-pin')) {
+        e.stopPropagation();
+        togglePinCombo(combo);
+        return;
+      }
       if (e.target.classList.contains('combo-pill-remove')) {
         e.stopPropagation();
         removeSavedCombo(combo);
@@ -1545,7 +1779,6 @@ function renderSavedCombos() {
     els.savedCombosList.appendChild(pill);
   }
 
-  // Show "Show more" button on mobile whenever there is history, or on desktop when > 10 (or always accessible)
   const extraCount = total - HISTORY_PREVIEW_LIMIT;
   els.showMoreHistoryBtn.classList.remove('hidden');
   els.showMoreHistoryBtn.classList.toggle('has-more-than-limit', extraCount > 0);
@@ -1555,28 +1788,33 @@ function renderSavedCombos() {
 
 function renderFullHistoryList() {
   els.historyFullList.innerHTML = '';
+  const ordered = getOrderedCombos();
 
-  if (state.savedCombos.length === 0) {
+  if (ordered.length === 0) {
     els.historyFullList.innerHTML = `<div class="dropdown-item-desc" style="padding:12px;">No shuffle history yet.</div>`;
     return;
   }
 
-  state.savedCombos.forEach((combo) => {
+  ordered.forEach((combo) => {
+    const pinned = isComboPinned(combo);
     const item = document.createElement('div');
-    item.className = 'history-sheet-item';
+    item.className = `history-sheet-item ${pinned ? 'pinned' : ''}`;
     item.innerHTML = `
+      <button type="button" class="history-sheet-pin ${
+        pinned ? 'active' : ''
+      }" title="${pinned ? 'Unpin favorite' : 'Pin favorite to top'}" aria-label="${
+      pinned ? 'Unpin' : 'Pin'
+    }">${pinned ? '★' : '☆'}</button>
       <button type="button" class="history-sheet-select">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="history-sheet-icon" aria-hidden="true">
-          <polyline points="16 3 21 3 21 8"></polyline>
-          <line x1="4" y1="20" x2="21" y2="3"></line>
-          <polyline points="21 16 21 21 16 21"></polyline>
-          <line x1="15" y1="15" x2="21" y2="21"></line>
-          <line x1="4" y1="4" x2="9" y2="9"></line>
-        </svg>
         <span class="history-sheet-text">${escapeHtml(combo)}</span>
       </button>
       <button type="button" class="history-sheet-delete" title="Remove from history" aria-label="Remove">✕</button>
     `;
+
+    item.querySelector('.history-sheet-pin').addEventListener('click', (e) => {
+      e.stopPropagation();
+      togglePinCombo(combo);
+    });
 
     item.querySelector('.history-sheet-select').addEventListener('click', () => {
       closeHistoryModal();
@@ -1878,11 +2116,26 @@ async function init() {
   });
 
   els.clearAllHistoryBtn.addEventListener('click', () => {
-    state.savedCombos = [];
-    saveJson(STORAGE_KEYS.SAVED_COMBOS, state.savedCombos);
-    renderSavedCombos();
-    closeHistoryModal();
-    showToast('History cleared');
+    const pinnedSet = new Set(state.pinnedCombos.map((c) => c.toLowerCase()));
+    const hasUnpinned = state.savedCombos.some(
+      (c) => !pinnedSet.has(c.toLowerCase())
+    );
+
+    if (hasUnpinned && state.pinnedCombos.length > 0) {
+      state.savedCombos = [...state.pinnedCombos];
+      saveJson(STORAGE_KEYS.SAVED_COMBOS, state.savedCombos);
+      renderSavedCombos();
+      renderFullHistoryList();
+      showToast('Unpinned history cleared (pinned favorites kept)');
+    } else {
+      state.savedCombos = [];
+      state.pinnedCombos = [];
+      saveJson(STORAGE_KEYS.SAVED_COMBOS, state.savedCombos);
+      saveJson(STORAGE_KEYS.PINNED_COMBOS, state.pinnedCombos);
+      renderSavedCombos();
+      closeHistoryModal();
+      showToast('History cleared');
+    }
   });
 
   // Drag-down gesture on bottom sheet handle

@@ -1,9 +1,10 @@
-const CACHE_NAME = 'selective-shuffle-v5';
+const CACHE_NAME = 'selective-shuffle-v9';
 const ASSETS = [
   './',
   './index.html',
   './styles.css',
   './app.js',
+  './icon.png',
   './icon.svg',
   './manifest.json'
 ];
