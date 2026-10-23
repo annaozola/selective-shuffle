@@ -1,6 +1,6 @@
 # Selective Shuffle
 
-Type `dominic fike + brockhampton + kevin abstract + geezer` (or any combination of artists separated by `+`, `,`, or `&`) to pull deep cuts across their full discographies and shuffle them together immediately.
+Type `artist 1 + artist 2 + artist 3` (or any combination of artists separated by `+`, `,`, or `&`) to pull deep cuts across their full discographies and shuffle them together immediately.
 
 ## Features
 

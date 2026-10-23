@@ -75,21 +75,23 @@
       <section class="prompt-section">
         <form id="shuffleForm" class="search-bar-form" autocomplete="off">
           <div class="search-bar-container" id="searchContainer">
-            <input
-              type="text"
-              id="artistInput"
-              class="artist-input"
-              placeholder="dominic fike + brockhampton + kevin abstract + geezer"
-              aria-label="Artists separated by plus sign"
-              autofocus
-              spellcheck="false"
-            />
-            <button type="button" class="clear-input-btn hidden" id="clearInputBtn" title="Clear input" aria-label="Clear">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <line x1="18" y1="6" x2="6" y2="18"></line>
-                <line x1="6" y1="6" x2="18" y2="18"></line>
-              </svg>
-            </button>
+            <div class="search-input-row">
+              <input
+                type="text"
+                id="artistInput"
+                class="artist-input"
+                placeholder="artist 1 + artist 2 + artist 3"
+                aria-label="Artists separated by plus sign"
+                autofocus
+                spellcheck="false"
+              />
+              <button type="button" class="clear-input-btn hidden" id="clearInputBtn" title="Clear input" aria-label="Clear">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <line x1="18" y1="6" x2="6" y2="18"></line>
+                  <line x1="6" y1="6" x2="18" y2="18"></line>
+                </svg>
+              </button>
+            </div>
             <button type="submit" class="shuffle-submit-btn" id="shuffleBtn">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
                 <polygon points="5 3 19 12 5 21 5 3"></polygon>
@@ -107,8 +109,8 @@
           <div class="tuning-group">
             <label class="tuning-label" for="balanceSelect">Mix</label>
             <select id="balanceSelect" class="minimal-select" title="How artists are weighted in the shuffle">
-              <option value="balanced" selected>Balanced per artist</option>
-              <option value="random">Pure random pool</option>
+              <option value="balanced" selected>Balanced</option>
+              <option value="random">Pure random</option>
             </select>
           </div>
 
@@ -117,9 +119,9 @@
           <div class="tuning-group">
             <label class="tuning-label" for="depthSelect">Depth</label>
             <select id="depthSelect" class="minimal-select" title="Which releases to pull songs from">
-              <option value="deep" selected>Full discography (albums + singles)</option>
-              <option value="albums">Albums only (deep cuts)</option>
-              <option value="top">Top tracks only</option>
+              <option value="deep" selected>Full discography</option>
+              <option value="albums">Albums only</option>
+              <option value="top">Top tracks</option>
             </select>
           </div>
 
@@ -136,8 +138,17 @@
         </div>
 
         <!-- Saved / Recent Combos -->
-        <div class="saved-combos" id="savedCombosSection">
-          <div class="saved-combos-list" id="savedCombosList"></div>
+        <div class="saved-combos hidden" id="savedCombosSection">
+          <div class="saved-combos-row">
+            <div class="saved-combos-list" id="savedCombosList"></div>
+            <button type="button" class="show-more-history-btn hidden" id="showMoreHistoryBtn" title="View full shuffle history">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <circle cx="12" cy="12" r="10"></circle>
+                <polyline points="12 6 12 12 16 14"></polyline>
+              </svg>
+              <span id="showMoreHistoryLabel">Show more</span>
+            </button>
+          </div>
         </div>
       </section>
 
@@ -210,6 +221,23 @@
         <div class="tracklist" id="tracklist"></div>
       </section>
     </main>
+
+    <!-- Full History Bottom Sheet Modal -->
+    <div class="modal-backdrop bottom-sheet-backdrop hidden" id="historyModal">
+      <div class="modal-card bottom-sheet-card" id="historySheetCard">
+        <div class="sheet-handle-bar" id="historySheetHandle" aria-hidden="true">
+          <span class="sheet-handle-pill"></span>
+        </div>
+        <div class="modal-header">
+          <h3>Shuffle History</h3>
+          <div class="modal-header-actions">
+            <button type="button" class="text-btn danger-text" id="clearAllHistoryBtn">Clear all</button>
+            <button type="button" class="icon-btn-sm" id="closeHistoryBtn" aria-label="Close">✕</button>
+          </div>
+        </div>
+        <div class="history-full-list" id="historyFullList"></div>
+      </div>
+    </div>
 
     <!-- Artist Disambiguation Popover -->
     <div class="modal-backdrop hidden" id="artistSwapModal">

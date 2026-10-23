@@ -13,9 +13,7 @@ const STORAGE_KEYS = {
   REUSABLE_PLAYLIST_ID: 'qs_reusable_playlist_id',
 };
 
-const DEFAULT_COMBOS = [
-  'dominic fike + brockhampton + kevin abstract + geezer',
-];
+const DEFAULT_COMBOS = [];
 
 const SCOPES = [
   'user-modify-playback-state',
@@ -75,6 +73,14 @@ const els = {
 
   savedCombosSection: document.getElementById('savedCombosSection'),
   savedCombosList: document.getElementById('savedCombosList'),
+  showMoreHistoryBtn: document.getElementById('showMoreHistoryBtn'),
+  showMoreHistoryLabel: document.getElementById('showMoreHistoryLabel'),
+  historyModal: document.getElementById('historyModal'),
+  historySheetCard: document.getElementById('historySheetCard'),
+  historySheetHandle: document.getElementById('historySheetHandle'),
+  historyFullList: document.getElementById('historyFullList'),
+  clearAllHistoryBtn: document.getElementById('clearAllHistoryBtn'),
+  closeHistoryBtn: document.getElementById('closeHistoryBtn'),
 
   statusBanner: document.getElementById('statusBanner'),
   statusSpinner: document.getElementById('statusSpinner'),
@@ -560,6 +566,39 @@ async function resolveAllTokensLive(tokens) {
   );
 }
 
+function isMobileDevice() {
+  return window.matchMedia('(max-width: 600px), (pointer: coarse)').matches;
+}
+
+function appendPlusForNextArtist() {
+  const current = els.artistInput.value;
+  if (!current || !current.trim()) return;
+  const cleaned = current.replace(/[\s+,&]+$/, '').trim();
+  if (!cleaned) return;
+  els.artistInput.value = `${cleaned} + `;
+  handleInputUpdated();
+  els.artistInput.focus();
+  const len = els.artistInput.value.length;
+  try {
+    els.artistInput.setSelectionRange(len, len);
+  } catch {
+    // Ignore if selection range not supported
+  }
+}
+
+function removeTokenFromInput(tokenToRemove) {
+  const remaining = state.parsedTokens.filter(
+    (t) => t.toLowerCase() !== tokenToRemove.toLowerCase()
+  );
+  els.artistInput.value =
+    remaining.length > 0
+      ? isMobileDevice()
+        ? `${remaining.join(' + ')} + `
+        : remaining.join(' + ')
+      : '';
+  handleInputUpdated();
+}
+
 function renderParsedArtistChips() {
   els.parsedArtistsBar.innerHTML = '';
   const tokens = state.parsedTokens;
@@ -577,12 +616,11 @@ function renderParsedArtistChips() {
 
     const lower = token.toLowerCase();
     const resolved = state.resolvedArtists.get(lower);
-    const chip = document.createElement('button');
-    chip.type = 'button';
+    const chip = document.createElement('div');
 
     if (resolved) {
       chip.className = 'artist-chip';
-      chip.title = 'Click to switch if you meant a different artist';
+      chip.title = 'Tap artist name to switch match, or × to remove';
       const imgUrl =
         resolved.images?.[resolved.images.length - 1]?.url ||
         resolved.images?.[0]?.url ||
@@ -593,22 +631,38 @@ function renderParsedArtistChips() {
         : `<span class="artist-chip-count">▾</span>`;
 
       chip.innerHTML = `
-        ${
-          sanitizeImageUrl(imgUrl)
-            ? `<img class="artist-chip-avatar" src="${escapeHtml(sanitizeImageUrl(imgUrl))}" alt="" />`
-            : `<span class="artist-chip-avatar-placeholder">${escapeHtml(
-                resolved.name.charAt(0)
-              )}</span>`
-        }
-        <span>${escapeHtml(resolved.name)}</span>
-        ${countBadge}
+        <button type="button" class="artist-chip-main">
+          ${
+            sanitizeImageUrl(imgUrl)
+              ? `<img class="artist-chip-avatar" src="${escapeHtml(sanitizeImageUrl(imgUrl))}" alt="" />`
+              : `<span class="artist-chip-avatar-placeholder">${escapeHtml(
+                  resolved.name.charAt(0)
+                )}</span>`
+          }
+          <span>${escapeHtml(resolved.name)}</span>
+          ${countBadge}
+        </button>
+        <button type="button" class="artist-chip-remove" title="Remove artist" aria-label="Remove">×</button>
       `;
-      chip.addEventListener('click', () => openArtistSwapModal(token));
+      chip.querySelector('.artist-chip-main').addEventListener('click', () => openArtistSwapModal(token));
+      chip.querySelector('.artist-chip-remove').addEventListener('click', (e) => {
+        e.stopPropagation();
+        removeTokenFromInput(token);
+      });
     } else {
       chip.className = 'artist-chip unmatched';
-      chip.innerHTML = `<span>${escapeHtml(token)}</span>`;
-      chip.addEventListener('click', () => {
+      chip.innerHTML = `
+        <button type="button" class="artist-chip-main">
+          <span>${escapeHtml(token)}</span>
+        </button>
+        <button type="button" class="artist-chip-remove" title="Remove artist" aria-label="Remove">×</button>
+      `;
+      chip.querySelector('.artist-chip-main').addEventListener('click', () => {
         if (isAuthenticated()) openArtistSwapModal(token);
+      });
+      chip.querySelector('.artist-chip-remove').addEventListener('click', (e) => {
+        e.stopPropagation();
+        removeTokenFromInput(token);
       });
     }
 
@@ -1031,10 +1085,36 @@ function renderResultsSection(artists, totalCatalogCount) {
   renderTracklist();
 }
 
+function removeTrackAt(idx) {
+  state.shuffledQueue.splice(idx, 1);
+  if (state.activeTrackIndex === idx) {
+    state.activeTrackIndex = -1;
+  } else if (state.activeTrackIndex > idx) {
+    state.activeTrackIndex--;
+  }
+  renderTracklist();
+}
+
 function renderTracklist() {
   els.tracklist.innerHTML = '';
 
   state.shuffledQueue.forEach((track, idx) => {
+    const wrapper = document.createElement('div');
+    wrapper.className = 'track-swipe-wrapper';
+
+    const swipeBg = document.createElement('div');
+    swipeBg.className = 'track-swipe-bg';
+    swipeBg.style.opacity = '0';
+    swipeBg.innerHTML = `
+      <span class="track-swipe-delete-label">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <polyline points="3 6 5 6 21 6"></polyline>
+          <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+        </svg>
+        <span>Remove</span>
+      </span>
+    `;
+
     const row = document.createElement('div');
     row.className = `track-row ${idx === state.activeTrackIndex ? 'playing' : ''}`;
     row.innerHTML = `
@@ -1056,7 +1136,13 @@ function renderTracklist() {
       </div>
     `;
 
+    let didSwipe = false;
+
     row.addEventListener('click', (e) => {
+      if (didSwipe) {
+        didSwipe = false;
+        return;
+      }
       if (e.target.closest('.track-remove-btn')) return;
       playQueueOnSpotify(idx);
     });
@@ -1064,16 +1150,102 @@ function renderTracklist() {
     const removeBtn = row.querySelector('.track-remove-btn');
     removeBtn.addEventListener('click', (e) => {
       e.stopPropagation();
-      state.shuffledQueue.splice(idx, 1);
-      if (state.activeTrackIndex === idx) {
-        state.activeTrackIndex = -1;
-      } else if (state.activeTrackIndex > idx) {
-        state.activeTrackIndex--;
-      }
-      renderTracklist();
+      removeTrackAt(idx);
     });
 
-    els.tracklist.appendChild(row);
+    // Mobile right-to-left swipe-to-delete gesture with progressive red background (opacity 0 -> 1)
+    let startX = 0;
+    let startY = 0;
+    let currentDx = 0;
+    let isDragging = false;
+    let isScrollingVertically = false;
+
+    row.addEventListener(
+      'touchstart',
+      (e) => {
+        if (e.touches.length !== 1) return;
+        startX = e.touches[0].clientX;
+        startY = e.touches[0].clientY;
+        currentDx = 0;
+        isDragging = false;
+        isScrollingVertically = false;
+        didSwipe = false;
+        row.style.transition = 'none';
+        swipeBg.style.transition = 'none';
+      },
+      { passive: true }
+    );
+
+    row.addEventListener(
+      'touchmove',
+      (e) => {
+        if (isScrollingVertically || e.touches.length !== 1) return;
+        const dx = e.touches[0].clientX - startX;
+        const dy = e.touches[0].clientY - startY;
+
+        if (!isDragging) {
+          if (Math.abs(dy) > Math.abs(dx) && Math.abs(dy) > 6) {
+            isScrollingVertically = true;
+            return;
+          }
+          if (dx < -8 && Math.abs(dx) > Math.abs(dy)) {
+            isDragging = true;
+            didSwipe = true;
+          } else {
+            return;
+          }
+        }
+
+        if (isDragging) {
+          if (e.cancelable) e.preventDefault();
+          // Only allow sliding right-to-left (dx <= 0)
+          currentDx = Math.min(0, dx);
+          const rowWidth = row.offsetWidth || 320;
+          const deleteThreshold = Math.min(130, rowWidth * 0.35);
+          const progress = Math.min(1, Math.abs(currentDx) / deleteThreshold);
+
+          row.style.transform = `translate3d(${currentDx}px, 0, 0)`;
+          row.style.backgroundColor = `rgba(255, 75, 75, ${progress.toFixed(3)})`;
+          swipeBg.style.opacity = progress.toFixed(3);
+        }
+      },
+      { passive: false }
+    );
+
+    const finishSwipe = () => {
+      if (!isDragging) return;
+      isDragging = false;
+      const rowWidth = row.offsetWidth || 320;
+      const deleteThreshold = Math.min(130, rowWidth * 0.35);
+
+      if (Math.abs(currentDx) >= deleteThreshold) {
+        row.style.transition = 'transform 0.2s ease-out, background-color 0.2s ease-out';
+        swipeBg.style.transition = 'opacity 0.2s ease-out';
+        row.style.transform = `translate3d(-${rowWidth}px, 0, 0)`;
+        row.style.backgroundColor = 'rgba(255, 75, 75, 1)';
+        swipeBg.style.opacity = '1';
+        setTimeout(() => {
+          removeTrackAt(idx);
+        }, 190);
+      } else {
+        row.style.transition = 'transform 0.22s cubic-bezier(0.2, 0.8, 0.2, 1), background-color 0.22s ease';
+        swipeBg.style.transition = 'opacity 0.22s ease';
+        row.style.transform = 'translate3d(0, 0, 0)';
+        row.style.backgroundColor = '';
+        swipeBg.style.opacity = '0';
+        setTimeout(() => {
+          didSwipe = false;
+        }, 50);
+      }
+      currentDx = 0;
+    };
+
+    row.addEventListener('touchend', finishSwipe, { passive: true });
+    row.addEventListener('touchcancel', finishSwipe, { passive: true });
+
+    wrapper.appendChild(swipeBg);
+    wrapper.appendChild(row);
+    els.tracklist.appendChild(wrapper);
   });
 }
 
@@ -1311,40 +1483,58 @@ async function saveOrUpdatePlaylist(reusable = true) {
   }
 }
 
-// Saved / Recent Combos
+// Saved / Recent Combos (Preview capped at 10 + Full History Bottom Sheet)
+const HISTORY_PREVIEW_LIMIT = 10;
+
 function saveRecentCombo(comboStr) {
   const norm = comboStr.trim().toLowerCase();
   if (!norm) return;
   state.savedCombos = [
     norm,
     ...state.savedCombos.filter((c) => c.toLowerCase() !== norm),
-  ].slice(0, 8);
+  ].slice(0, 100);
   saveJson(STORAGE_KEYS.SAVED_COMBOS, state.savedCombos);
   renderSavedCombos();
 }
 
+function removeSavedCombo(combo) {
+  state.savedCombos = state.savedCombos.filter((c) => c !== combo);
+  saveJson(STORAGE_KEYS.SAVED_COMBOS, state.savedCombos);
+  renderSavedCombos();
+  if (!els.historyModal.classList.contains('hidden')) {
+    renderFullHistoryList();
+    if (state.savedCombos.length === 0) {
+      closeHistoryModal();
+    }
+  }
+}
+
 function renderSavedCombos() {
   els.savedCombosList.innerHTML = '';
-  if (state.savedCombos.length === 0) {
+  const total = state.savedCombos.length;
+
+  if (total === 0) {
     els.savedCombosSection.classList.add('hidden');
+    els.showMoreHistoryBtn.classList.add('hidden');
     return;
   }
+
   els.savedCombosSection.classList.remove('hidden');
 
-  for (const combo of state.savedCombos) {
+  const previewItems = state.savedCombos.slice(0, HISTORY_PREVIEW_LIMIT);
+
+  for (const combo of previewItems) {
     const pill = document.createElement('div');
     pill.className = 'combo-pill';
     pill.innerHTML = `
       <span class="combo-pill-text">${escapeHtml(combo)}</span>
-      <span class="combo-pill-remove" title="Remove saved combo" role="button">×</span>
+      <span class="combo-pill-remove" title="Remove from history" role="button" aria-label="Remove">×</span>
     `;
 
     pill.addEventListener('click', (e) => {
       if (e.target.classList.contains('combo-pill-remove')) {
         e.stopPropagation();
-        state.savedCombos = state.savedCombos.filter((c) => c !== combo);
-        saveJson(STORAGE_KEYS.SAVED_COMBOS, state.savedCombos);
-        renderSavedCombos();
+        removeSavedCombo(combo);
         return;
       }
       els.artistInput.value = combo;
@@ -1354,6 +1544,71 @@ function renderSavedCombos() {
 
     els.savedCombosList.appendChild(pill);
   }
+
+  // Show "Show more" button on mobile whenever there is history, or on desktop when > 10 (or always accessible)
+  const extraCount = total - HISTORY_PREVIEW_LIMIT;
+  els.showMoreHistoryBtn.classList.remove('hidden');
+  els.showMoreHistoryBtn.classList.toggle('has-more-than-limit', extraCount > 0);
+  els.showMoreHistoryLabel.textContent =
+    extraCount > 0 ? `Show more (+${extraCount})` : `History (${total})`;
+}
+
+function renderFullHistoryList() {
+  els.historyFullList.innerHTML = '';
+
+  if (state.savedCombos.length === 0) {
+    els.historyFullList.innerHTML = `<div class="dropdown-item-desc" style="padding:12px;">No shuffle history yet.</div>`;
+    return;
+  }
+
+  state.savedCombos.forEach((combo) => {
+    const item = document.createElement('div');
+    item.className = 'history-sheet-item';
+    item.innerHTML = `
+      <button type="button" class="history-sheet-select">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="history-sheet-icon" aria-hidden="true">
+          <polyline points="16 3 21 3 21 8"></polyline>
+          <line x1="4" y1="20" x2="21" y2="3"></line>
+          <polyline points="21 16 21 21 16 21"></polyline>
+          <line x1="15" y1="15" x2="21" y2="21"></line>
+          <line x1="4" y1="4" x2="9" y2="9"></line>
+        </svg>
+        <span class="history-sheet-text">${escapeHtml(combo)}</span>
+      </button>
+      <button type="button" class="history-sheet-delete" title="Remove from history" aria-label="Remove">✕</button>
+    `;
+
+    item.querySelector('.history-sheet-select').addEventListener('click', () => {
+      closeHistoryModal();
+      els.artistInput.value = combo;
+      handleInputUpdated();
+      executeShuffleAndPlay(true);
+    });
+
+    item.querySelector('.history-sheet-delete').addEventListener('click', (e) => {
+      e.stopPropagation();
+      removeSavedCombo(combo);
+    });
+
+    els.historyFullList.appendChild(item);
+  });
+}
+
+function openHistoryModal() {
+  renderFullHistoryList();
+  els.historyModal.classList.remove('hidden');
+  els.historySheetCard.style.transform = '';
+  requestAnimationFrame(() => {
+    els.historyModal.classList.add('sheet-open');
+  });
+}
+
+function closeHistoryModal() {
+  els.historyModal.classList.remove('sheet-open');
+  setTimeout(() => {
+    els.historyModal.classList.add('hidden');
+    els.historySheetCard.style.transform = '';
+  }, 240);
 }
 
 // Settings Modal
@@ -1480,8 +1735,30 @@ async function init() {
     }
   }
 
+  // Update placeholder & enterkeyhint for mobile so users know Enter adds an artist
+  const syncInputHintForDevice = () => {
+    if (isMobileDevice()) {
+      els.artistInput.placeholder = 'Type artist, tap Enter ↵ to add...';
+      els.artistInput.setAttribute('enterkeyhint', 'done');
+    } else {
+      els.artistInput.placeholder = 'artist 1 + artist 2 + artist 3';
+      els.artistInput.setAttribute('enterkeyhint', 'go');
+    }
+  };
+  syncInputHintForDevice();
+  window.addEventListener('resize', syncInputHintForDevice);
+
   // Wire up UI events
   els.artistInput.addEventListener('input', handleInputUpdated);
+
+  // On mobile, tapping the keyboard Enter key adds " + " so you can type the next artist quickly
+  els.artistInput.addEventListener('keydown', (e) => {
+    if ((e.key === 'Enter' || e.keyCode === 13) && isMobileDevice()) {
+      e.preventDefault();
+      e.stopPropagation();
+      appendPlusForNextArtist();
+    }
+  });
 
   els.clearInputBtn.addEventListener('click', () => {
     els.artistInput.value = '';
@@ -1491,6 +1768,10 @@ async function init() {
 
   els.shuffleForm.addEventListener('submit', (e) => {
     e.preventDefault();
+    if (isMobileDevice() && e.submitter !== els.shuffleBtn) {
+      appendPlusForNextArtist();
+      return;
+    }
     executeShuffleAndPlay(true);
   });
 
@@ -1588,6 +1869,64 @@ async function init() {
       els.artistSwapModal.classList.add('hidden');
     }
   });
+
+  // History Bottom Sheet Modal events
+  els.showMoreHistoryBtn.addEventListener('click', openHistoryModal);
+  els.closeHistoryBtn.addEventListener('click', closeHistoryModal);
+  els.historyModal.addEventListener('click', (e) => {
+    if (e.target === els.historyModal) closeHistoryModal();
+  });
+
+  els.clearAllHistoryBtn.addEventListener('click', () => {
+    state.savedCombos = [];
+    saveJson(STORAGE_KEYS.SAVED_COMBOS, state.savedCombos);
+    renderSavedCombos();
+    closeHistoryModal();
+    showToast('History cleared');
+  });
+
+  // Drag-down gesture on bottom sheet handle
+  let sheetStartY = 0;
+  let sheetCurrentDy = 0;
+  let sheetDragging = false;
+
+  els.historySheetHandle.addEventListener(
+    'touchstart',
+    (e) => {
+      if (e.touches.length !== 1) return;
+      sheetStartY = e.touches[0].clientY;
+      sheetCurrentDy = 0;
+      sheetDragging = true;
+      els.historySheetCard.style.transition = 'none';
+    },
+    { passive: true }
+  );
+
+  els.historySheetHandle.addEventListener(
+    'touchmove',
+    (e) => {
+      if (!sheetDragging || e.touches.length !== 1) return;
+      const dy = Math.max(0, e.touches[0].clientY - sheetStartY);
+      sheetCurrentDy = dy;
+      els.historySheetCard.style.transform = `translate3d(0, ${dy}px, 0)`;
+    },
+    { passive: true }
+  );
+
+  const endSheetDrag = () => {
+    if (!sheetDragging) return;
+    sheetDragging = false;
+    els.historySheetCard.style.transition = '';
+    if (sheetCurrentDy > 80) {
+      closeHistoryModal();
+    } else {
+      els.historySheetCard.style.transform = '';
+    }
+    sheetCurrentDy = 0;
+  };
+
+  els.historySheetHandle.addEventListener('touchend', endSheetDrag, { passive: true });
+  els.historySheetHandle.addEventListener('touchcancel', endSheetDrag, { passive: true });
 
   els.switchToLoopbackBtn.addEventListener('click', () => {
     const newUrl = window.location.href.replace('://localhost', '://127.0.0.1');
