@@ -1,0 +1,290 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <meta name="theme-color" content="#0a0a0a" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <title>Quick Shuffle</title>
+  <link rel="icon" type="image/svg+xml" href="./icon.svg" />
+  <link rel="apple-touch-icon" href="./icon.svg" />
+  <link rel="manifest" href="./manifest.json" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body>
+  <div class="app-shell">
+    <!-- Minimal Header -->
+    <header class="top-bar">
+      <div class="brand" id="brandReset" title="Reset view">
+        <span class="brand-icon" aria-hidden="true">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="16 3 21 3 21 8"></polyline>
+            <line x1="4" y1="20" x2="21" y2="3"></line>
+            <polyline points="21 16 21 21 16 21"></polyline>
+            <line x1="15" y1="15" x2="21" y2="21"></line>
+            <line x1="4" y1="4" x2="9" y2="9"></line>
+          </svg>
+        </span>
+        <span class="brand-name">quick shuffle</span>
+      </div>
+
+      <div class="top-actions">
+        <!-- Device selector (visible when authenticated) -->
+        <div class="device-wrapper hidden" id="deviceWrapper">
+          <button type="button" class="pill-btn device-btn" id="deviceBtn" title="Select playback device">
+            <span class="status-dot" id="deviceDot"></span>
+            <span id="deviceLabel">Devices</span>
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <polyline points="6 9 12 15 18 9"></polyline>
+            </svg>
+          </button>
+          <div class="dropdown-menu hidden" id="deviceMenu">
+            <div class="dropdown-header">
+              <span>Spotify Connect Devices</span>
+              <button type="button" class="icon-btn-sm" id="refreshDevicesBtn" title="Refresh devices">↻</button>
+            </div>
+            <div id="deviceList" class="dropdown-list"></div>
+          </div>
+        </div>
+
+        <!-- Auth / Settings Button -->
+        <button type="button" class="pill-btn auth-btn" id="authBtn">
+          <span class="status-dot" id="authDot"></span>
+          <span id="authLabel">Connect Spotify</span>
+        </button>
+
+        <button type="button" class="icon-btn" id="settingsBtn" title="Spotify API & Setup" aria-label="Settings">
+          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="3"></circle>
+            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+          </svg>
+        </button>
+      </div>
+    </header>
+
+    <!-- Main Content -->
+    <main class="main-stage">
+      <!-- Hero Prompt / Search Bar -->
+      <section class="prompt-section">
+        <form id="shuffleForm" class="search-bar-form" autocomplete="off">
+          <div class="search-bar-container" id="searchContainer">
+            <input
+              type="text"
+              id="artistInput"
+              class="artist-input"
+              placeholder="dominic fike + brockhampton + kevin abstract + geezer"
+              aria-label="Artists separated by plus sign"
+              autofocus
+              spellcheck="false"
+            />
+            <button type="button" class="clear-input-btn hidden" id="clearInputBtn" title="Clear input" aria-label="Clear">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <line x1="18" y1="6" x2="6" y2="18"></line>
+                <line x1="6" y1="6" x2="18" y2="18"></line>
+              </svg>
+            </button>
+            <button type="submit" class="shuffle-submit-btn" id="shuffleBtn">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                <polygon points="5 3 19 12 5 21 5 3"></polygon>
+              </svg>
+              <span id="shuffleBtnText">Shuffle</span>
+            </button>
+          </div>
+        </form>
+
+        <!-- Resolved / Parsed Artist Chips -->
+        <div class="parsed-artists-bar" id="parsedArtistsBar" aria-live="polite"></div>
+
+        <!-- Subtle Tuning Controls -->
+        <div class="tuning-bar">
+          <div class="tuning-group">
+            <label class="tuning-label" for="balanceSelect">Mix</label>
+            <select id="balanceSelect" class="minimal-select" title="How artists are weighted in the shuffle">
+              <option value="balanced" selected>Balanced per artist</option>
+              <option value="random">Pure random pool</option>
+            </select>
+          </div>
+
+          <span class="tuning-divider">·</span>
+
+          <div class="tuning-group">
+            <label class="tuning-label" for="depthSelect">Depth</label>
+            <select id="depthSelect" class="minimal-select" title="Which releases to pull songs from">
+              <option value="deep" selected>Full discography (albums + singles)</option>
+              <option value="albums">Albums only (deep cuts)</option>
+              <option value="top">Top tracks only</option>
+            </select>
+          </div>
+
+          <span class="tuning-divider">·</span>
+
+          <div class="tuning-group">
+            <label class="tuning-label" for="limitSelect">Queue</label>
+            <select id="limitSelect" class="minimal-select" title="Number of tracks to queue or save">
+              <option value="50">50 songs</option>
+              <option value="80" selected>80 songs</option>
+              <option value="100">100 songs</option>
+            </select>
+          </div>
+        </div>
+
+        <!-- Saved / Recent Combos -->
+        <div class="saved-combos" id="savedCombosSection">
+          <div class="saved-combos-list" id="savedCombosList"></div>
+        </div>
+      </section>
+
+      <!-- Status / Progress Banner -->
+      <div class="status-banner hidden" id="statusBanner" role="status" aria-live="polite">
+        <div class="spinner" id="statusSpinner"></div>
+        <span id="statusText">Harvesting discographies...</span>
+      </div>
+
+      <!-- Results & Queue Section -->
+      <section class="results-section hidden" id="resultsSection">
+        <div class="results-header">
+          <div class="results-meta">
+            <h2 class="results-title" id="resultsTitle">Shuffled Mix</h2>
+            <p class="results-subtitle" id="resultsSubtitle">0 tracks</p>
+          </div>
+
+          <div class="results-actions">
+            <button type="button" class="action-btn primary-action" id="playNowBtn" title="Play directly on active Spotify device">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+                <polygon points="5 3 19 12 5 21 5 3"></polygon>
+              </svg>
+              <span id="playNowLabel">Play Now</span>
+            </button>
+
+            <button type="button" class="action-btn" id="reshuffleBtn" title="Re-roll track order from loaded discographies">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <polyline points="16 3 21 3 21 8"></polyline>
+                <line x1="4" y1="20" x2="21" y2="3"></line>
+                <polyline points="21 16 21 21 16 21"></polyline>
+                <line x1="15" y1="15" x2="21" y2="21"></line>
+                <line x1="4" y1="4" x2="9" y2="9"></line>
+              </svg>
+              <span>Reshuffle</span>
+            </button>
+
+            <div class="playlist-dropdown-wrapper">
+              <button type="button" class="action-btn" id="playlistMenuBtn" title="Save or open as a Spotify playlist">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path>
+                  <polyline points="17 21 17 13 7 13 7 21"></polyline>
+                  <polyline points="7 3 7 8 15 8"></polyline>
+                </svg>
+                <span>Playlist ▾</span>
+              </button>
+              <div class="dropdown-menu dropdown-right hidden" id="playlistMenu">
+                <button type="button" class="dropdown-item" id="overwriteQuickPlaylistBtn">
+                  <div class="dropdown-item-title">Open in "Quick Shuffle" Playlist</div>
+                  <div class="dropdown-item-desc">Reuses one temporary playlist (no clutter) &amp; opens Spotify</div>
+                </button>
+                <button type="button" class="dropdown-item" id="createNewPlaylistBtn">
+                  <div class="dropdown-item-title">Save as New Playlist</div>
+                  <div class="dropdown-item-desc">Creates a permanent playlist named after these artists</div>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Playlist link banner when saved -->
+        <div class="playlist-saved-banner hidden" id="playlistSavedBanner">
+          <span id="playlistSavedText">Playlist updated!</span>
+          <div class="playlist-saved-links">
+            <a href="#" id="openSpotifyAppLink" class="text-link accent-link">Open in Spotify App ↗</a>
+            <a href="#" id="openSpotifyWebLink" target="_blank" rel="noopener" class="text-link">Web Player ↗</a>
+          </div>
+        </div>
+
+        <!-- Tracklist -->
+        <div class="tracklist" id="tracklist"></div>
+      </section>
+    </main>
+
+    <!-- Artist Disambiguation Popover -->
+    <div class="modal-backdrop hidden" id="artistSwapModal">
+      <div class="modal-card modal-sm">
+        <div class="modal-header">
+          <h3 id="artistSwapTitle">Select Artist</h3>
+          <button type="button" class="icon-btn-sm" id="closeArtistSwapBtn" aria-label="Close">✕</button>
+        </div>
+        <div class="artist-candidates-list" id="artistCandidatesList"></div>
+      </div>
+    </div>
+
+    <!-- Setup / Settings Modal -->
+    <div class="modal-backdrop hidden" id="settingsModal">
+      <div class="modal-card">
+        <div class="modal-header">
+          <h3>Spotify Connection</h3>
+          <button type="button" class="icon-btn-sm" id="closeSettingsBtn" aria-label="Close">✕</button>
+        </div>
+
+        <div class="modal-body">
+          <div class="localhost-warning hidden" id="localhostNotice">
+            <p><strong>Tip for local PC use:</strong> Spotify requires <code>127.0.0.1</code> instead of <code>localhost</code> for local Redirect URIs.</p>
+            <button type="button" class="pill-btn accent-pill" id="switchToLoopbackBtn">Switch to 127.0.0.1 now →</button>
+          </div>
+
+          <div class="form-group">
+            <label for="clientIdInput">Spotify Client ID</label>
+            <input
+              type="text"
+              id="clientIdInput"
+              class="modal-input"
+              placeholder="e.g. 4b8f9c2d1e0a3b5c6d7e8f9a0b1c2d3e"
+              spellcheck="false"
+              autocomplete="off"
+            />
+          </div>
+
+          <div class="form-group">
+            <label>Your Redirect URI <span class="muted">(add this in your Spotify App settings)</span></label>
+            <div class="copy-row">
+              <code class="uri-code" id="redirectUriDisplay"></code>
+              <button type="button" class="pill-btn" id="copyRedirectBtn">Copy</button>
+            </div>
+          </div>
+
+          <details class="setup-guide" id="setupGuideDetails">
+            <summary>How to get a free Spotify Client ID (takes 60s)</summary>
+            <ol class="setup-steps">
+              <li>Open the <a href="https://developer.spotify.com/dashboard" target="_blank" rel="noopener">Spotify Developer Dashboard ↗</a> and log in.</li>
+              <li>Click <strong>Create app</strong>, give it any name/description, and paste the <strong>Redirect URI</strong> above into the <em>Redirect URIs</em> field (don't forget to click <strong>Add</strong> and <strong>Save</strong>).</li>
+              <li>Copy your <strong>Client ID</strong> from the dashboard and paste it above.</li>
+            </ol>
+          </details>
+
+          <div class="share-link-box" id="shareLinkBox">
+            <div class="share-link-info">
+              <strong>Open on your Phone or Tablet</strong>
+              <span>Copy a link with your Client ID pre-filled so you don't have to type it again on mobile.</span>
+            </div>
+            <button type="button" class="pill-btn" id="copyMobileLinkBtn">Copy Link</button>
+          </div>
+        </div>
+
+        <div class="modal-footer">
+          <button type="button" class="action-btn danger-text hidden" id="logoutBtn">Disconnect</button>
+          <div class="modal-footer-right">
+            <button type="button" class="action-btn" id="saveSettingsOnlyBtn">Save</button>
+            <button type="button" class="action-btn primary-action" id="saveAndConnectBtn">Save &amp; Connect Spotify</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Toast Notification -->
+    <div class="toast hidden" id="toast" role="alert" aria-live="assertive"></div>
+  </div>
+
+  <script src="./app.js" type="module"></script>
+</body>
+</html>
