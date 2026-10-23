@@ -6,6 +6,7 @@ const STORAGE_KEYS = {
   REFRESH_TOKEN: 'qs_refresh_token',
   EXPIRES_AT: 'qs_expires_at',
   CODE_VERIFIER: 'qs_pkce_verifier',
+  OAUTH_STATE: 'qs_oauth_state',
   PENDING_QUERY: 'qs_pending_query',
   SAVED_COMBOS: 'qs_saved_combos',
   ARTIST_OVERRIDES: 'qs_artist_overrides',
@@ -215,8 +216,10 @@ async function startSpotifyLogin() {
   const verifier = generateRandomString(64);
   const hashed = await sha256(verifier);
   const challenge = base64UrlEncode(hashed);
+  const oauthState = generateRandomString(32);
 
   localStorage.setItem(STORAGE_KEYS.CODE_VERIFIER, verifier);
+  localStorage.setItem(STORAGE_KEYS.OAUTH_STATE, oauthState);
 
   const authUrl = new URL('https://accounts.spotify.com/authorize');
   authUrl.searchParams.set('response_type', 'code');
@@ -224,6 +227,7 @@ async function startSpotifyLogin() {
   authUrl.searchParams.set('scope', SCOPES);
   authUrl.searchParams.set('code_challenge_method', 'S256');
   authUrl.searchParams.set('code_challenge', challenge);
+  authUrl.searchParams.set('state', oauthState);
   authUrl.searchParams.set('redirect_uri', getRedirectUri());
 
   window.location.href = authUrl.toString();
@@ -590,8 +594,8 @@ function renderParsedArtistChips() {
 
       chip.innerHTML = `
         ${
-          imgUrl
-            ? `<img class="artist-chip-avatar" src="${escapeHtml(imgUrl)}" alt="" />`
+          sanitizeImageUrl(imgUrl)
+            ? `<img class="artist-chip-avatar" src="${escapeHtml(sanitizeImageUrl(imgUrl))}" alt="" />`
             : `<span class="artist-chip-avatar-placeholder">${escapeHtml(
                 resolved.name.charAt(0)
               )}</span>`
@@ -660,8 +664,8 @@ async function openArtistSwapModal(token) {
 
     item.innerHTML = `
       ${
-        imgUrl
-          ? `<img class="candidate-avatar" src="${escapeHtml(imgUrl)}" alt="" />`
+        sanitizeImageUrl(imgUrl)
+          ? `<img class="candidate-avatar" src="${escapeHtml(sanitizeImageUrl(imgUrl))}" alt="" />`
           : `<span class="artist-chip-avatar-placeholder" style="width:36px;height:36px;">${escapeHtml(
               artist.name.charAt(0)
             )}</span>`
@@ -1036,8 +1040,8 @@ function renderTracklist() {
     row.innerHTML = `
       <span class="track-index">${idx === state.activeTrackIndex ? '▶' : idx + 1}</span>
       ${
-        track.albumArt
-          ? `<img class="track-art" src="${escapeHtml(track.albumArt)}" alt="" loading="lazy" />`
+        sanitizeImageUrl(track.albumArt)
+          ? `<img class="track-art" src="${escapeHtml(sanitizeImageUrl(track.albumArt))}" alt="" loading="lazy" />`
           : `<div class="track-art"></div>`
       }
       <div class="track-info">
@@ -1385,7 +1389,17 @@ function escapeHtml(str) {
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;');
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function sanitizeImageUrl(url) {
+  if (!url || typeof url !== 'string') return '';
+  return /^https:\/\//i.test(url.trim()) ? url.trim() : '';
+}
+
+function isValidClientId(id) {
+  return /^[a-f0-9]{20,40}$/i.test(String(id || '').trim());
 }
 
 // Event Listeners & Initialization
@@ -1399,21 +1413,27 @@ async function init() {
   const url = new URL(window.location.href);
   const cidParam = url.searchParams.get('cid');
   if (cidParam) {
-    state.clientId = cidParam.trim();
-    localStorage.setItem(STORAGE_KEYS.CLIENT_ID, state.clientId);
+    const cleanCid = cidParam.trim();
     url.searchParams.delete('cid');
     window.history.replaceState({}, document.title, url.toString());
-    showToast('Spotify Client ID configured from link');
+    if (isValidClientId(cleanCid)) {
+      state.clientId = cleanCid;
+      localStorage.setItem(STORAGE_KEYS.CLIENT_ID, state.clientId);
+      showToast('Spotify Client ID configured from link');
+    } else {
+      showToast('Invalid Client ID format in link');
+    }
   }
 
   const qParam = url.searchParams.get('q');
   if (qParam) {
-    els.artistInput.value = qParam;
+    els.artistInput.value = qParam.slice(0, 200);
     url.searchParams.delete('q');
     window.history.replaceState({}, document.title, url.toString());
   }
 
   const authCode = url.searchParams.get('code');
+  const authState = url.searchParams.get('state');
   const authError = url.searchParams.get('error');
 
   if (authCode || authError) {
@@ -1422,8 +1442,13 @@ async function init() {
     url.searchParams.delete('error');
     window.history.replaceState({}, document.title, url.toString());
 
+    const expectedState = localStorage.getItem(STORAGE_KEYS.OAUTH_STATE);
+    localStorage.removeItem(STORAGE_KEYS.OAUTH_STATE);
+
     if (authError) {
       showToast(`Spotify auth cancelled: ${authError}`);
+    } else if (expectedState && authState !== expectedState) {
+      showToast('Security check failed (state mismatch). Please try connecting again.');
     } else if (authCode) {
       try {
         setStatus('Completing Spotify sign-in...');

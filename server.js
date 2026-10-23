@@ -22,9 +22,12 @@ const server = http.createServer((req, res) => {
   let pathname = decodeURIComponent(reqUrl.pathname);
   if (pathname === '/') pathname = '/index.html';
 
-  const filePath = path.join(__dirname, pathname);
-  if (!filePath.startsWith(__dirname)) {
-    res.writeHead(403);
+  const rootDir = path.resolve(__dirname);
+  const filePath = path.resolve(rootDir, '.' + pathname);
+  const rel = path.relative(rootDir, filePath);
+
+  if (rel.startsWith('..') || path.isAbsolute(rel) || path.basename(filePath).startsWith('.')) {
+    res.writeHead(403, { 'Content-Type': 'text/plain; charset=utf-8' });
     res.end('Forbidden');
     return;
   }
@@ -39,6 +42,9 @@ const server = http.createServer((req, res) => {
     res.writeHead(200, {
       'Content-Type': MIME_TYPES[ext] || 'application/octet-stream',
       'Cache-Control': 'no-cache',
+      'X-Content-Type-Options': 'nosniff',
+      'X-Frame-Options': 'DENY',
+      'Referrer-Policy': 'no-referrer',
     });
     res.end(content);
   });
