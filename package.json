@@ -1,9 +1,9 @@
 {
-  "name": "quick-shuffle-for-spotify",
+  "name": "selective-shuffle",
   "version": "1.0.0",
   "private": true,
   "type": "module",
-  "description": "Minimal web app to shuffle multiple Spotify artists' full discographies on the fly without cluttering your playlists.",
+  "description": "Minimal web app to selectively shuffle multiple Spotify artists' full discographies on the fly.",
   "scripts": {
     "start": "node server.js",
     "dev": "node server.js"

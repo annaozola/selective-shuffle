@@ -1,4 +1,4 @@
-# Quick Shuffle for Spotify
+# Selective Shuffle
 
 Type `dominic fike + brockhampton + kevin abstract + geezer` (or any combination of artists separated by `+`, `,`, or `&`) to pull deep cuts across their full discographies and shuffle them together immediately.
 
@@ -10,8 +10,8 @@ Type `dominic fike + brockhampton + kevin abstract + geezer` (or any combination
   - **Balanced per artist** *(default)*: Interleaves rounds across your chosen artists so an artist with 100 songs doesn't drown out an artist with 10 songs.
   - **Pure random pool**: Pools all tracks together with equal weight.
 - **Direct Playback + Playlist Mode**:
-  - Plays directly on your active Spotify device via Spotify Connect without creating any playlist.
-  - Also supports updating a single reusable **`Quick Shuffle ⚡`** playlist (zero library clutter) or saving as a new playlist and opening it directly in the Spotify app.
+  - Plays directly on your active Spotify device via Spotify Connect.
+  - Also supports updating a single reusable **`Selective Shuffle ⚡`** playlist (zero library clutter) or saving as a new playlist and opening it directly in the Spotify app.
 - **Responsive & PWA-Ready**: Installable to your home screen on iOS, Android, tablet, or desktop.
 
 ## Quick Start (Local PC)

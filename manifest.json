@@ -1,6 +1,6 @@
 {
-  "name": "Quick Shuffle for Spotify",
-  "short_name": "Quick Shuffle",
+  "name": "Selective Shuffle",
+  "short_name": "Selective Shuffle",
   "description": "Type artist1 + artist2 + artist3 to instantly shuffle their full discographies.",
   "start_url": "./",
   "display": "standalone",

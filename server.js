@@ -45,5 +45,5 @@ const server = http.createServer((req, res) => {
 });
 
 server.listen(PORT, HOST, () => {
-  console.log(`\n⚡ Quick Shuffle running at: http://${HOST}:${PORT}/\n`);
+  console.log(`\n⚡ Selective Shuffle running at: http://${HOST}:${PORT}/\n`);
 });
