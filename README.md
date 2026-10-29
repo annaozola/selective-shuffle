@@ -5,14 +5,15 @@ Type `artist 1 + artist 2 + artist 3` (or any combination of artists separated b
 ## Features
 
 - **Expression Search Bar**: Type multiple artists (`artist 1 + artist 2 + artist 3`) and see live matched artist chips. Click any chip to switch artists if a name is shared by multiple acts.
-- **Full Discography / Deep Cuts**: Pulls albums and singles for each artist, deduplicates remasters/clean-explicit duplicates, and caches discographies in memory for instant re-shuffling.
+- **Full Discography / Deep Cuts / Top Tracks**: Pulls albums, singles, or popularity-ranked top songs for each artist, deduplicates remasters/clean-explicit duplicates, and caches discographies in memory for instant re-shuffling.
 - **Balanced vs. Pure Random Mix**:
   - **Balanced per artist** *(default)*: Interleaves rounds across your chosen artists so an artist with 100 songs doesn't drown out an artist with 10 songs.
   - **Pure random pool**: Pools all tracks together with equal weight.
+- **Queue Limits up to 300 Songs**: Mix 50, 80, 100, 150, 200, or 300 songs with balanced or pure random shuffle.
 - **Direct Playback + Playlist Mode**:
   - Plays directly on your active Spotify device via Spotify Connect.
-  - Also supports updating a single reusable **`Selective Shuffle ⚡`** playlist (zero library clutter) or saving as a new playlist and opening it directly in the Spotify app.
-- **Responsive & PWA-Ready**: Installable to your home screen on iOS, Android, tablet, or desktop.
+  - Also supports updating a single reusable **`Selective Shuffle`** playlist (with custom cover art and zero library clutter) or saving as a new playlist and opening it directly in the Spotify app.
+- **Responsive & PWA-Ready**: Installable to your home screen on iOS, Android, tablet, or desktop with swipe-to-delete track queue and mobile shortcuts.
 
 ## Quick Start (Local PC)
 

@@ -1,4 +1,4 @@
-const CACHE_NAME = 'selective-shuffle-v9';
+const CACHE_NAME = 'selective-shuffle-v11';
 const ASSETS = [
   './',
   './index.html',

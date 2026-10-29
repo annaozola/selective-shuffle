@@ -786,7 +786,24 @@ async function mapConcurrent(items, concurrency, fn) {
   return results;
 }
 
-// Fetch Full Discography / Deep Cuts for an Artist
+// Helper to fetch multiple pages of Spotify track search in popularity/relevance order
+async function fetchRankedSearchTracks(artist, queryStr, offsets) {
+  const pages = await mapConcurrent(offsets, 6, async (offset) => {
+    try {
+      const data = await spotifyFetch(
+        `/search?type=track&limit=10&offset=${offset}&q=${encodeURIComponent(queryStr)}`
+      );
+      return (data?.tracks?.items || [])
+        .filter((t) => t.artists?.some((a) => a.id === artist.id) && t.uri)
+        .map((t) => formatTrack(t, t.album, artist));
+    } catch {
+      return [];
+    }
+  });
+  return pages.flat();
+}
+
+// Fetch Full Discography / Deep Cuts / Top Tracks for an Artist
 async function fetchArtistDiscography(artist, depth, onProgress) {
   const cacheKey = `${artist.id}:${depth}`;
   if (state.discographyCache.has(cacheKey)) {
@@ -794,20 +811,113 @@ async function fetchArtistDiscography(artist, depth, onProgress) {
   }
 
   if (depth === 'top') {
-    let tracks = [];
+    const rankedTracks = [];
+
+    // 1. Seed with /top-tracks if available in the user's Spotify API mode
     try {
       const topData = await spotifyFetch(`/artists/${artist.id}/top-tracks`);
-      tracks = (topData?.tracks || []).map((t) => formatTrack(t, t.album, artist));
-    } catch {
-      // Fallback to search if top-tracks endpoint is restricted (max limit is 10)
-      const searchData = await spotifyFetch(
-        `/search?type=track&limit=10&q=${encodeURIComponent(`artist:"${artist.name}"`)}`
-      );
-      tracks = (searchData?.tracks?.items || [])
-        .filter((t) => t.artists?.some((a) => a.id === artist.id))
+      const seed = (topData?.tracks || [])
+        .filter((t) => t.uri)
         .map((t) => formatTrack(t, t.album, artist));
+      rankedTracks.push(...seed);
+    } catch {
+      // Often restricted in Spotify 2026 dev mode; paginated search below handles it
     }
-    const deduped = deduplicateTracks(tracks);
+
+    // 2. Paginate Spotify track search (ordered by popularity/relevance, 10 per page)
+    const strictQuery = `artist:"${artist.name}"`;
+    const batch1 = await fetchRankedSearchTracks(
+      artist,
+      strictQuery,
+      [0, 10, 20, 30, 40, 50]
+    );
+    rankedTracks.push(...batch1);
+    if (onProgress) onProgress(rankedTracks.length);
+
+    let deduped = deduplicateTracks(rankedTracks);
+
+    // Fetch a second search batch if we need more popular tracks
+    if (deduped.length < 65 && batch1.length > 0) {
+      const batch2 = await fetchRankedSearchTracks(
+        artist,
+        strictQuery,
+        [60, 70, 80, 90, 100, 110]
+      );
+      rankedTracks.push(...batch2);
+      deduped = deduplicateTracks(rankedTracks);
+      if (onProgress) onProgress(deduped.length);
+    }
+
+    // If strict artist:"..." filter returned few matches (e.g. punctuation in artist name), search plain name
+    if (deduped.length < 35) {
+      const broadBatch = await fetchRankedSearchTracks(
+        artist,
+        artist.name,
+        [0, 10, 20, 30, 40, 50]
+      );
+      rankedTracks.push(...broadBatch);
+      deduped = deduplicateTracks(rankedTracks);
+    }
+
+    // 3. If search still yielded fewer than 200 unique songs, supplement with interleaved tracks
+    // from the artist's singles & albums so queues up to 300 songs always fill up
+    if (deduped.length < 200) {
+      try {
+        let rawReleases = [];
+        let nextUrl = `/artists/${artist.id}/albums?include_groups=album,single&limit=10`;
+        let pages = 0;
+        while (nextUrl && pages < 8) {
+          const page = await spotifyFetch(nextUrl);
+          if (page?.items) rawReleases.push(...page.items);
+          nextUrl = page?.next || null;
+          pages++;
+        }
+
+        const uniqueReleases = [];
+        const seenReleaseNames = new Set();
+        for (const rel of rawReleases) {
+          const norm = normalizeTitle(rel.name);
+          if (!seenReleaseNames.has(norm)) {
+            seenReleaseNames.add(norm);
+            uniqueReleases.push(rel);
+          }
+        }
+
+        const releaseTrackBuckets = await mapConcurrent(
+          uniqueReleases,
+          6,
+          async (release) => {
+            try {
+              const tp = await spotifyFetch(`/albums/${release.id}/tracks`);
+              return (tp?.items || [])
+                .filter((t) => t.artists?.some((a) => a.id === artist.id) && t.uri)
+                .map((t) => formatTrack(t, release, artist));
+            } catch {
+              return [];
+            }
+          }
+        );
+
+        // Interleave track #1 of each release, then track #2, etc., to favor lead singles & opener hits
+        let pos = 0;
+        let added = true;
+        while (added) {
+          added = false;
+          for (const bucket of releaseTrackBuckets) {
+            if (pos < bucket.length) {
+              rankedTracks.push(bucket[pos]);
+              added = true;
+            }
+          }
+          pos++;
+        }
+
+        deduped = deduplicateTracks(rankedTracks);
+      } catch {
+        // Keep search tracks if release supplement fails
+      }
+    }
+
     state.discographyCache.set(cacheKey, deduped);
     return deduped;
   }
@@ -818,7 +928,7 @@ async function fetchArtistDiscography(artist, depth, onProgress) {
   let nextEndpoint = `/artists/${artist.id}/albums?include_groups=${includeGroups}&limit=10`;
   let pageCount = 0;
 
-  while (nextEndpoint && pageCount < 6) {
+  while (nextEndpoint && pageCount < 10) {
     const page = await spotifyFetch(nextEndpoint);
     if (page?.items) {
       rawAlbums.push(...page.items);
@@ -921,14 +1031,49 @@ function shuffleArray(arr) {
   return copy;
 }
 
-// Build final shuffled queue according to Mix mode (balanced vs pure random) and Queue limit
-function buildShuffledQueue(artistList, tracksByArtistId, balanceMode, limit) {
+// Build final shuffled queue according to Mix mode (balanced vs pure random), Depth mode, and Queue limit
+function buildShuffledQueue(artistList, tracksByArtistId, balanceMode, limit, depthMode = 'deep') {
   const seenTrackUris = new Set();
+
+  // In 'top' mode, each artist's pool is ordered from most popular to least popular.
+  // Harvest round-robin from the top of each artist's ranked list until we have enough
+  // top songs to satisfy `limit` (plus a small 15% buffer so Reshuffle stays fresh).
+  let effectivePools = tracksByArtistId;
+  if (depthMode === 'top') {
+    effectivePools = new Map();
+    const targetTopPoolSize = Math.ceil(limit * 1.15);
+    const topSeenUris = new Set();
+    let totalHarvested = 0;
+    let rankIdx = 0;
+
+    for (const artist of artistList) {
+      effectivePools.set(artist.id, []);
+    }
+
+    while (totalHarvested < targetTopPoolSize) {
+      let addedInPass = false;
+      for (const artist of artistList) {
+        const fullRanked = tracksByArtistId.get(artist.id) || [];
+        if (rankIdx < fullRanked.length) {
+          addedInPass = true;
+          const candidate = fullRanked[rankIdx];
+          if (!topSeenUris.has(candidate.uri)) {
+            topSeenUris.add(candidate.uri);
+            effectivePools.get(artist.id).push(candidate);
+            totalHarvested++;
+            if (totalHarvested >= targetTopPoolSize) break;
+          }
+        }
+      }
+      if (!addedInPass) break;
+      rankIdx++;
+    }
+  }
 
   if (balanceMode === 'random') {
     const all = [];
     for (const artist of artistList) {
-      const pool = tracksByArtistId.get(artist.id) || [];
+      const pool = effectivePools.get(artist.id) || [];
       for (const t of pool) {
         if (!seenTrackUris.has(t.uri)) {
           seenTrackUris.add(t.uri);
@@ -941,28 +1086,33 @@ function buildShuffledQueue(artistList, tracksByArtistId, balanceMode, limit) {
 
   // Balanced mode: interleave rounds across artists so each artist gets fair play
   const buckets = artistList
-    .map((a) => shuffleArray(tracksByArtistId.get(a.id) || []))
-    .filter((b) => b.length > 0);
+    .map((a) => ({
+      tracks: shuffleArray(effectivePools.get(a.id) || []),
+      cursor: 0,
+    }))
+    .filter((b) => b.tracks.length > 0);
 
   const result = [];
-  let round = 0;
   while (result.length < limit) {
     let addedInRound = false;
     // Randomize order of artists within each round for natural variety
     const bucketOrder = shuffleArray(buckets);
     for (const bucket of bucketOrder) {
-      if (round < bucket.length) {
-        const candidate = bucket[round];
-        if (!seenTrackUris.has(candidate.uri)) {
-          seenTrackUris.add(candidate.uri);
-          result.push(candidate);
-          addedInRound = true;
-          if (result.length >= limit) break;
-        }
+      while (
+        bucket.cursor < bucket.tracks.length &&
+        seenTrackUris.has(bucket.tracks[bucket.cursor].uri)
+      ) {
+        bucket.cursor++;
+      }
+      if (bucket.cursor < bucket.tracks.length) {
+        const candidate = bucket.tracks[bucket.cursor++];
+        seenTrackUris.add(candidate.uri);
+        result.push(candidate);
+        addedInRound = true;
+        if (result.length >= limit) break;
       }
     }
     if (!addedInRound) break;
-    round++;
   }
 
   return result;
@@ -1060,7 +1210,8 @@ async function executeShuffleAndPlay(autoPlay = true) {
       matchedArtists,
       state.currentTracksPool,
       balanceMode,
-      limit
+      limit,
+      depth
     );
     state.activeTrackIndex = -1;
 
@@ -1320,19 +1471,35 @@ function renderTracklist() {
   });
 }
 
-// Helper to replace items in a playlist (supports Feb 2026 /items endpoint + legacy /tracks)
+// Helper to replace items in a playlist in 100-track batches (supports up to 300+ tracks)
 async function replacePlaylistItems(playlistId, uris) {
-  const payload = JSON.stringify({ uris: uris.slice(0, 100) });
+  const firstBatch = JSON.stringify({ uris: uris.slice(0, 100) });
   try {
     await spotifyFetch(`/playlists/${playlistId}/items`, {
       method: 'PUT',
-      body: payload,
+      body: firstBatch,
     });
   } catch {
     await spotifyFetch(`/playlists/${playlistId}/tracks`, {
       method: 'PUT',
-      body: payload,
+      body: firstBatch,
     });
+  }
+
+  // Spotify limits each playlist write request to 100 URIs; append remaining chunks via POST
+  for (let i = 100; i < uris.length; i += 100) {
+    const chunkPayload = JSON.stringify({ uris: uris.slice(i, i + 100) });
+    try {
+      await spotifyFetch(`/playlists/${playlistId}/items`, {
+        method: 'POST',
+        body: chunkPayload,
+      });
+    } catch {
+      await spotifyFetch(`/playlists/${playlistId}/tracks`, {
+        method: 'POST',
+        body: chunkPayload,
+      });
+    }
   }
 }
 
@@ -1562,13 +1729,15 @@ async function playQueueOnSpotify(startIndex = 0) {
 
     // Fallback to raw track URIs if context playback failed
     if (!playedViaContext) {
+      const sliceStart = startIndex >= 100 ? startIndex : 0;
+      const offsetPos = startIndex >= 100 ? 0 : startIndex;
       await spotifyFetch(
         `/me/player/play?device_id=${encodeURIComponent(targetDeviceId)}`,
         {
           method: 'PUT',
           body: JSON.stringify({
-            uris: uris.slice(0, 100),
-            offset: { position: startIndex },
+            uris: uris.slice(sliceStart, sliceStart + 100),
+            offset: { position: offsetPos },
             position_ms: 0,
           }),
         }
